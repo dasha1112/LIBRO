@@ -6,6 +6,7 @@ from database import BookDatabase
 from book_filter import BookFilter
 from user_lists import UserListsManager
 from book_page import BookPageManager
+from simple_recommender import SimpleRecommender
 
 # Настройка страницы
 st.set_page_config(
@@ -28,7 +29,8 @@ def init_managers():
         "auth": UserManager(),
         "db": BookDatabase(),
         "lists": UserListsManager(),
-        "book_page": None  # Инициализируем позже
+        "book_page": None,  # Инициализируем позже
+        "recommender": None
     }
 
 managers = init_managers()
@@ -40,6 +42,11 @@ lists_manager = managers["lists"]
 if managers["book_page"] is None:
     managers["book_page"] = BookPageManager(db, auth_manager, lists_manager)
 book_page_manager = managers["book_page"]
+
+# Инициализируем SimpleRecommender
+if managers["recommender"] is None:
+    managers["recommender"] = SimpleRecommender(db, book_page_manager)
+recommender = managers["recommender"]
 
 # CSS стили
 st.markdown("""
@@ -420,6 +427,69 @@ def show_user_profile():
                         Ваши отзывы помогут другим читателям выбрать книгу!
                         """)
 
+def show_recommendations_page():
+    """Отображение страницы с рекомендациями"""
+    user = auth_manager.get_current_user()
+    if not user:
+        st.error("Войдите в систему для просмотра рекомендаций")
+        return
+    
+    st.header("🎯 Рекомендуемое вам")
+    
+    # Получаем рекомендации
+    with st.spinner("Ищем книги, которые могут вам понравиться..."):
+        recommendations = recommender.get_recommendations(user.username, limit=20)
+    
+    # Проверяем есть ли хорошие отзывы
+    good_reviews_books = recommender._get_books_with_good_reviews(user.username)
+    
+    if not good_reviews_books:
+        st.info("""
+        📝 **У вас пока нет оцененных книг**
+        
+        Чтобы получить персональные рекомендации:
+        1. Перейдите на страницу любой книги
+        2. Оставьте отзыв с оценкой (4⭐ или 5⭐)
+        3. Вернитесь на эту страницу
+        
+        А пока посмотрите популярные книги:
+        """)
+    
+    # Показываем рекомендации
+    if recommendations:
+        st.subheader(f"📚 Найдено {len(recommendations)} рекомендаций")
+        
+        # Простой список книг
+        for book in recommendations:
+            with st.container():
+                col1, col2 = st.columns([4, 1])
+                
+                with col1:
+                    st.markdown(f"**{book['title']}**")
+                    st.caption(f"*{book['author']}*")
+                    
+                    # Основная информация в одну строку
+                    col_info = st.columns(4)
+                    with col_info[0]:
+                        st.metric("Рейтинг", f"{book['rating']}⭐", delta=None)
+                    with col_info[1]:
+                        st.metric("Жанр", book['main_genre'][:10], delta=None)
+                    with col_info[2]:
+                        st.metric("Год", book['year'], delta=None)
+                    with col_info[3]:
+                        st.metric("Стр.", book['pages'], delta=None)
+                
+                with col2:
+                    if st.button("📖", key=f"rec_btn_{book['id']}", help="Перейти к книге", use_container_width=True):
+                        st.session_state.current_page = "book_details"
+                        st.session_state.selected_book_id = book["id"]
+                        st.rerun()
+                
+                # Разделитель
+                st.divider()
+    else:
+        st.warning("Не удалось найти рекомендации. Попробуйте оценить больше книг.")
+
 def show_main_search():
     """Главная страница поиска"""
     # Инициализация фильтра
@@ -677,7 +747,7 @@ def main():
         show_login_register()
     else:
         # Верхняя панель с пользователем и навигацией
-        col_nav1, col_nav2, col_nav3 = st.columns([6, 1, 1])
+        col_nav1, col_nav2, col_nav3, col_nav4 = st.columns([4, 1, 1, 1])
         
         with col_nav1:
             st.caption(f"Привет, {current_user.username}!")
@@ -690,6 +760,11 @@ def main():
                     st.rerun()
         
         with col_nav3:
+            if st.button("🎯 Рекомендации", use_container_width=True):
+                st.session_state.current_page = "recommendations"
+                st.rerun()
+        
+        with col_nav4:
             if st.button("👤 Профиль", use_container_width=True):
                 st.session_state.current_page = "profile"
                 st.rerun()
@@ -701,6 +776,8 @@ def main():
             show_book_details_page()
         elif st.session_state.current_page == "profile":
             show_user_profile()
+        elif st.session_state.current_page == "recommendations":
+            show_recommendations_page()
 
 if __name__ == "__main__":
     main()
