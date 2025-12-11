@@ -56,6 +56,37 @@ class BookDatabase:
         self.books = self._create_sample_books()
         self.reviews = self._create_sample_reviews()
         self.user_lists = {}  # {username: {list_name: [book_ids]}}
+
+    def get_user_reviews_from_manager(self, username: str, book_page_manager) -> pd.DataFrame:
+        """Получение отзывов пользователя из book_page_manager"""
+        all_reviews = book_page_manager.reviews  # Это словарь {book_id: [reviews]}
+        
+        user_reviews_list = []
+        for book_id, reviews in all_reviews.items():
+            for review in reviews:
+                if review["username"] == username:
+                    # Добавляем информацию о книге
+                    book_info = self.books[self.books["id"] == int(book_id)]
+                    if not book_info.empty:
+                        book_title = book_info.iloc[0]["title"]
+                        book_author = book_info.iloc[0]["author"]
+                    else:
+                        book_title = f"Книга ID: {book_id}"
+                        book_author = "Неизвестный автор"
+                    
+                    user_reviews_list.append({
+                        "id": review["id"],
+                        "book_id": int(book_id),
+                        "username": review["username"],
+                        "rating": review["rating"],
+                        "text": review["text"],
+                        "created_at": review["date"],
+                        "likes": review.get("likes", 0),
+                        "book_title": book_title,
+                        "book_author": book_author
+                    })
+        
+        return pd.DataFrame(user_reviews_list)
     
     def _create_sample_books(self) -> pd.DataFrame:
         """Создание демонстрационной базы книг с иерархией жанров"""
@@ -76,7 +107,7 @@ class BookDatabase:
             "cover_image": f"{base_image_path}book_1.png",
             "tags": ["мистика", "Москва", "дьявол", "любовь", "сатира"],
             "character_age": "30-40",
-            "character_gender": "мужчина и женщина",
+            "character_gender": "оба пола",
             "character_profession": "писатель",
             "setting_time_period": "1930-е годы",
             "setting_location": "Москва",
@@ -103,8 +134,8 @@ class BookDatabase:
             Однако эти невероятные события снова и снова становятся своеобразным «волшебным зеркалом», сквозь которое слушателю является подлинная история Латинской Америки…",
             "cover_image": f"{base_image_path}book_2.jpg",
             "tags": ["семейная сага", "магия", "одиночество", "Латинская Америка"],
-            "character_age": "разные",
-            "character_gender": "мужчины и женщины",
+            "character_age": "40 - 50",
+            "character_gender": "мужчина",
             "character_profession": "разные",
             "setting_time_period": "XIX-XX века",
             "setting_location": "Колумбия",
@@ -151,8 +182,8 @@ class BookDatabase:
             "description": "Некто приглашает десять гостей в особняк, расположенный на уединённом острове. Эти люди незнакомы друг с другом, у них нет ничего общего: разные профессии, социальный статус и жизненный опыт. Впрочем, главному режиссёру последующих событий известно, что у каждого из них в биографии есть страницы, о которых они предпочли бы забыть. Однако прошлое настигает их в образе невидимого убийцы, вершащего свой суд на преступниками, которые сумели избежать правосудия. Гости особняка один за другим погибают, повторяя судьбу героев известной считалочки про десять негритят… «И никого не стало».",
             "cover_image": f"{base_image_path}book_4.jpg",
             "tags": ["остров", "убийство", "тайна", "изоляция"],
-            "character_age": "разные",
-            "character_gender": "мужчины и женщины",
+            "character_age": "20-40",
+            "character_gender": "оба пола",
             "character_profession": "разные",
             "setting_time_period": "1930-е годы",
             "setting_location": "Остров",
@@ -225,7 +256,7 @@ class BookDatabase:
             В центре повествования – молодой Пол Атрейдес, наследник герцога Лето Атрейдеса. Семья переезжает на планету Арракис, единственный во вселенной источник пряностей-меланжа. Автор создает масштабное полотно, где отображены сложные политические, религиозные, экологические, технологические вопросы. Здесь тесно переплетаются судьбы самого Пола, его семьи, коренных жителей Арракиса, Императора, могущественных гильдий и орденов. Великое противостояние сильных мира сего ведет к глобальным переменам, которые затронут все человечество.",
             "cover_image": f"{base_image_path}book_7.jpg",
             "tags": ["космос", "политика", "пустыня", "мессия", "экология"],
-            "character_age": "младше 20",
+            "character_age": "20-30",
             "character_gender": "мужчина",
             "character_profession": "наследник",
             "setting_time_period": "Будущее",
@@ -273,7 +304,7 @@ class BookDatabase:
             "description": "«Гарри Поттер и философский камень» — первая книга фэнтезийной саги Джоан Роулинг, рассказывающая о сироте Гарри Поттере, который в свой 11-й день рождения узнаёт, что он волшебник, и отправляется в Школу Чародейства и Волшебства Хогвартс, где обретает друзей, учится магии и раскрывает тайну загадочного камня, который пытается украсть возродившийся злой волшебник Волан-де-Морт, убивший родителей Гарри",
             "cover_image": f"{base_image_path}book_9.jpg",
             "tags": ["волшебство", "школа", "дружба", "сирота"],
-            "character_age": "младше 20",
+            "character_age": "0-18",
             "character_gender": "мужчина",
             "character_profession": "ученик",
             "setting_time_period": "1990-е годы",
@@ -297,7 +328,7 @@ class BookDatabase:
             "description": "«Властелин колец: Братство кольца» — это начало эпической фэнтези-саги о хоббите Фродо Бэггинсе, которому предстоит уничтожить Кольцо Всевластья, выкованное Тёмным Властелином Сауроном, чтобы спасти Средиземье от порабощения, отправившись в опасное путешествие в Мордор вместе с разношёрстным Братством эльфов, гномов, людей и хоббитов, где главное — борьба добра и зла и испытание дружбы",
             "cover_image": f"{base_image_path}book_10.png",
             "tags": ["кольцо", "путешествие", "битвы", "Средиземье"],
-            "character_age": "разные",
+            "character_age": "20-30",
             "character_gender": "мужчина",
             "character_profession": "хоббит",
             "setting_time_period": "Мифическое прошлое",
@@ -346,7 +377,7 @@ class BookDatabase:
             Холден наделен «абсолютным нравственным слухом» — он мгновенно различает фальшь, с него словно содрана кожа, обнажены нервные окончания, его сверхчувствительность — особого рода радар, улавливающий то, мимо чего спокойно проходят другие. Но он не ангел и не «дитя цветов», а трудный подросток во всей красе: со своими переживаниями, волнениями и талантами, но и со всеми тараканами тоже. К тому же у Холдена есть еще и странная, но очень трогательная мечта...",
             "cover_image": f"{base_image_path}book_12.jpg",
             "tags": ["подросток", "бунт", "одиночество", "Нью-Йорк"],
-            "character_age": "младше 20",
+            "character_age": "0-18",
             "character_gender": "мужчина",
             "character_profession": "школьник",
             "setting_time_period": "1940-е годы",
@@ -421,7 +452,7 @@ class BookDatabase:
             Автобиографическая повесть «Зеленые холмы Африки» – одно из произведений, заложивших основу мифа о «папе Хэме» – смелом до безумия авантюристе-интеллектуале, любимце женщин, искателе сильных ощущений и новых впечатлений.",
             "cover_image": f"{base_image_path}book_15.jpg",
             "tags": ["рыбак", "море", "борьба", "одиночество", "Куба"],
-            "character_age": "старше 50",
+            "character_age": "50-60",
             "character_gender": "мужчина",
             "character_profession": "рыбак",
             "setting_time_period": "1940-е годы",
@@ -495,7 +526,7 @@ class BookDatabase:
             В данную книгу включен полный комплект иллюстраций, сопровождавших исходную публикацию в журнале «Стрэнд» романа «Собака Баскервилей» и всех рассказов из обоих сборников, — иллюстраций Сидни Пэджета, Уолтера Пэджета, Гилберта Холидея и других художников.",
             "cover_image": f"{base_image_path}book_18.jpg",
             "tags": ["Холмс", "расследование", "призрак", "деревня"],
-            "character_age": "старше 40",
+            "character_age": "40-50",
             "character_gender": "мужчина",
             "character_profession": "частный детектив",
             "setting_time_period": "Викторианская эпоха",
@@ -546,7 +577,7 @@ class BookDatabase:
             "cover_image": f"{base_image_path}book_20.jpg",
             "tags": ["капитализм", "индивидуализм", "забастовка", "антиутопия", "бизнес"],
             "character_age": "30-40",
-            "character_gender": "мужчины и женщины",
+            "character_gender": "оба пола",
             "character_profession": "промышленники",
             "setting_time_period": "1950-е годы",
             "setting_location": "США",

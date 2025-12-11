@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import os
 from auth import UserManager
 from database import BookDatabase
 from book_filter import BookFilter
@@ -304,22 +305,120 @@ def show_user_profile():
                 else:
                     st.info(f"Вы еще не добавили книги в список '{tab_name}'")
             else:
-                # Вкладка с рецензиями
-                user_reviews = db.get_reviews_for_user(user.username)
-                if not user_reviews.empty:
-                    for _, review in user_reviews.iterrows():
-                        with st.container():
-                            # Найдем книгу для отображения названия
-                            book = db.books[db.books["id"] == review["book_id"]]
-                            if not book.empty:
-                                book_title = book.iloc[0]["title"]
-                                st.write(f"**Книга:** {book_title}")
-                            st.write(f"**Оценка:** {'⭐' * review['rating']}")
-                            st.write(f"**Текст:** {review['text']}")
-                            st.write(f"*{review['created_at']}*")
-                            st.divider()
-                else:
-                    st.info("Вы еще не написали ни одной рецензии")
+                with tabs[5]:  # Рецензии
+                # Получаем отзывы из book_page_manager
+                    user_reviews = db.get_user_reviews_from_manager(user.username, book_page_manager)
+                    
+                    if not user_reviews.empty:
+                        # Статистика
+                        total_reviews = len(user_reviews)
+                        avg_rating = user_reviews['rating'].mean() if total_reviews > 0 else 0
+                        
+                        col_stats1, col_stats2 = st.columns(2)
+                        with col_stats1:
+                            st.metric("Всего отзывов", total_reviews)
+                        with col_stats2:
+                            st.metric("Средняя оценка", f"{avg_rating:.1f} ⭐")
+                        
+                        st.divider()
+                        
+                        # Сортировка
+                        col_sort1, col_sort2 = st.columns(2)
+                        with col_sort1:
+                            sort_by = st.selectbox(
+                                "Сортировать по:",
+                                ["Дате (новые)", "Дате (старые)", "Оценке (высокие)", "Оценке (низкие)", "Лайкам"],
+                                key="reviews_sort"
+                            )
+                        
+                        # Применяем сортировку
+                        if sort_by == "Дате (новые)":
+                            user_reviews = user_reviews.sort_values('created_at', ascending=False)
+                        elif sort_by == "Дате (старые)":
+                            user_reviews = user_reviews.sort_values('created_at', ascending=True)
+                        elif sort_by == "Оценке (высокие)":
+                            user_reviews = user_reviews.sort_values('rating', ascending=False)
+                        elif sort_by == "Оценке (низкие)":
+                            user_reviews = user_reviews.sort_values('rating', ascending=True)
+                        elif sort_by == "Лайкам":
+                            user_reviews = user_reviews.sort_values('likes', ascending=False)
+                        
+                        # Отображение отзывов
+                        for _, review in user_reviews.iterrows():
+                            with st.container():
+                                # Карточка отзыва
+                                col_rev1, col_rev2, col_rev3 = st.columns([1, 4, 1])
+                                
+                                with col_rev1:
+                                    # Обложка книги (если есть)
+                                    book_info = db.books[db.books["id"] == review['book_id']]
+                                    if not book_info.empty and 'cover_image' in book_info.columns:
+                                        cover_path = book_info.iloc[0]['cover_image']
+                                        if os.path.exists(cover_path):
+                                            st.image(cover_path, width=80)
+                                
+                                with col_rev2:
+                                    # Информация о книге
+                                    book_title = review.get('book_title', f"Книга ID: {review['book_id']}")
+                                    book_author = review.get('book_author', "")
+                                    
+                                    # Кликабельная ссылка на книгу
+                                    if st.button(f"**{book_title}**", 
+                                            key=f"book_link_{review['book_id']}_{review['id']}",
+                                            help="Перейти к книге"):
+                                        st.session_state.current_page = "book_details"
+                                        st.session_state.selected_book_id = review['book_id']
+                                        st.rerun()
+                                    
+                                    if book_author:
+                                        st.caption(f"*{book_author}*")
+                                    
+                                    # Оценка
+                                    stars = "⭐" * review['rating']
+                                    st.write(f"**Оценка:** {stars}")
+                                    
+                                    # Текст отзыва
+                                    with st.expander("Показать отзыв", expanded=True):
+                                        st.write(review["text"])
+                                    
+                                    # Дата и лайки
+                                    col_meta1, col_meta2 = st.columns(2)
+                                    with col_meta1:
+                                        st.caption(f"📅 {review['created_at']}")
+                                    with col_meta2:
+                                        st.caption(f"❤️ {review.get('likes', 0)}")
+                                
+                                with col_rev3:
+                                    # Действия
+                                    if st.button("✏️", 
+                                            key=f"edit_{review['book_id']}_{review['id']}",
+                                            help="Редактировать"):
+                                        st.session_state.editing_review = review['id']
+                                        st.session_state.editing_book_id = review['book_id']
+                                        st.rerun()
+                                    
+                                    if st.button("🗑️", 
+                                            key=f"delete_{review['book_id']}_{review['id']}",
+                                            help="Удалить",
+                                            type="secondary"):
+                                        # Здесь будет логика удаления
+                                        st.info("Для удаления отзыва перейдите на страницу книги")
+                                
+                                st.divider()
+                    else:
+                        # Если отзывов нет
+                        st.info("📝 Вы еще не написали ни одной рецензии")
+                        
+                        st.markdown("""
+                        ### Как оставить отзыв?
+                        
+                        1. **Найдите книгу** через поиск вверху страницы
+                        2. **Перейдите на страницу книги**, нажав "📖 Подробнее"
+                        3. **Пролистайте вниз** до раздела "💬 Отзывы и рецензии"
+                        4. **Заполните форму** "📝 Добавить отзыв"
+                        
+                        Ваши отзывы помогут другим читателям выбрать книгу!
+                        """)
 
 def show_main_search():
     """Главная страница поиска"""
@@ -362,15 +461,64 @@ def show_main_search():
         
         # Разворачиваемые секции для подтем
         with st.expander("👤 Характеристики героя", expanded=False):
-            if book_filter.filter_hierarchy["character"]["children"]["character_age"]["options"]:
-                character_age = st.selectbox(
-                    "Возраст героя",
-                    options=["Любой"] + book_filter.filter_hierarchy["character"]["children"]["character_age"]["options"],
-                    key="character_age"
+            # Пол героя
+            if book_filter.filter_hierarchy["character"]["children"]["character_gender"]["options"]:
+                character_gender = st.selectbox(
+                    "Пол героя",
+                    options=["Любой"] + book_filter.filter_hierarchy["character"]["children"]["character_gender"]["options"],
+                    key="character_gender"
                 )
-                if character_age != "Любой":
-                    selected_filters["character_age"] = character_age
+                if character_gender != "Любой":
+                    selected_filters["character_gender"] = character_gender
             
+            # Слайдер для диапазона возраста
+            if book_filter.filter_hierarchy["character"]["children"]["character_age"]["options"]:
+                age_options = book_filter.filter_hierarchy["character"]["children"]["character_age"]["options"]
+                
+                if age_options:  # Проверяем, что список не пустой
+                    # Определяем min и max из доступных опций
+                    min_age_val = min(age_options)
+                    max_age_val = max(age_options)
+                    
+                    # Устанавливаем дефолтные значения (20-40 как вы хотели)
+                    default_min = max(20, min_age_val)
+                    default_max = min(40, max_age_val)
+                    
+                    st.write("**Возраст героя:**")
+                    
+                    # Инициализируем состояние для слайдера, если его нет
+                    if "character_age_range" not in st.session_state:
+                        st.session_state.character_age_range = (default_min, default_max)
+                    
+                    # Слайдер для выбора диапазона
+                    age_range = st.slider(
+                        "Диапазон возраста (лет)",
+                        min_value=min_age_val,
+                        max_value=max_age_val,
+                        value=st.session_state.character_age_range,
+                        step=5,
+                        key="character_age_range_slider",
+                        label_visibility="collapsed",
+                        help="Выберите минимальный и максимальный возраст героя"
+                    )
+                    
+                    # Обновляем состояние
+                    st.session_state.character_age_range = age_range
+                    
+                    # Показываем выбранный диапазон
+                    col_age1, col_age2 = st.columns(2)
+                    with col_age1:
+                        st.caption(f"От: **{age_range[0]}** лет")
+                    with col_age2:
+                        st.caption(f"До: **{age_range[1]}** лет")
+                    
+                    # Добавляем в фильтры только если выбрано не всё
+                    if age_range != (min_age_val, max_age_val):
+                        selected_filters["character_age_range"] = age_range
+                else:
+                    st.info("Нет доступных вариантов возраста для выбранных фильтров")
+            
+            # Профессия героя
             if book_filter.filter_hierarchy["character"]["children"]["character_profession"]["options"]:
                 character_profession = st.selectbox(
                     "Профессия героя",
@@ -418,7 +566,7 @@ def show_main_search():
                 if mood:
                     selected_filters["mood"] = mood
         
-        # Фильтр по рейтингу (исправленный)
+        # Фильтр по рейтингу
         st.divider()
         st.subheader("⭐ Рейтинг")
         
@@ -462,8 +610,9 @@ def show_main_search():
                 st.rerun()
         with col2:
             if st.button("🗑️ Сбросить", type="secondary", use_container_width=True):
+                # Сбрасываем все состояния фильтров
                 for key in list(st.session_state.keys()):
-                    if key.startswith(("main_genre", "sub_genre", "character", "setting", "plot", "min_rating", "year_range")):
+                    if key.startswith(("main_genre", "sub_genre", "character", "setting", "plot", "min_rating", "character_age_range")):
                         del st.session_state[key]
                 if "current_filters" in st.session_state:
                     del st.session_state.current_filters
@@ -486,10 +635,6 @@ def show_main_search():
         # Добавляем рейтинг в описание если выбран
         if "min_rating" in current_filters:
             filter_desc += f" | Рейтинг: >{current_filters['min_rating']}"
-        
-        # Добавляем год в описание
-        if "year_min" in current_filters and "year_max" in current_filters:
-            filter_desc += f" | Год: {current_filters['year_min']}-{current_filters['year_max']}"
         
         st.info(f"**Примененные фильтры:** {filter_desc}")
     

@@ -106,9 +106,11 @@ class BookFilter:
         
         # Обновляем опции для характеристик героя
         character_df = filtered_df[["character_age", "character_gender", "character_profession"]].dropna()
-        self.filter_hierarchy["character"]["children"]["character_age"]["options"] = sorted(
-            character_df["character_age"].unique()
-        )
+        
+        # Обновляем опции для возраста (теперь это будет список чисел для слайдера)
+        age_options = self._extract_age_options(character_df["character_age"])
+        self.filter_hierarchy["character"]["children"]["character_age"]["options"] = age_options
+        
         self.filter_hierarchy["character"]["children"]["character_gender"]["options"] = sorted(
             character_df["character_gender"].unique()
         )
@@ -148,6 +150,15 @@ class BookFilter:
             if value:
                 if key == "min_rating":  # Особый случай для минимального рейтинга
                     filtered_df = filtered_df[filtered_df["rating"] >= value]
+                
+                # Обработка диапазона возраста
+                elif key == "character_age_range":
+                    min_age, max_age = value
+                    # Фильтруем книги, где возраст героя находится в диапазоне
+                    filtered_df = filtered_df[filtered_df["character_age"].apply(
+                        lambda x: self._is_age_in_range(x, min_age, max_age)
+                    )]
+                
                 elif isinstance(value, list) and value:
                     if key in ["plot_tropes", "mood", "tags", "themes", "style"]:
                         # Для списковых полей
@@ -156,11 +167,78 @@ class BookFilter:
                         )]
                     else:
                         filtered_df = filtered_df[filtered_df[key].isin(value)]
+                
                 elif not isinstance(value, list):
                     filtered_df = filtered_df[filtered_df[key] == value]
         
         return filtered_df
+
+    def _is_age_in_range(self, age_str: str, min_age: int, max_age: int) -> bool:
+        """Проверяет, находится ли возраст в диапазоне"""
+        if pd.isna(age_str):
+            return False
+        
+        # Парсим строку с возрастом (например "20-30", "30-40", "40-50")
+        try:
+            if "-" in str(age_str):
+                # Формат "20-30" или "30-40"
+                parts = str(age_str).split("-")
+                age_min = int(parts[0].strip())
+                age_max = int(parts[1].strip())
+                # Проверяем пересечение диапазонов
+                return not (age_max < min_age or age_min > max_age)
+            elif "+" in str(age_str):
+                # Формат "40+"
+                age_min = int(str(age_str).replace("+", "").strip())
+                return age_min <= max_age
+            else:
+                # Одиночный возраст
+                age = int(str(age_str).strip())
+                return min_age <= age <= max_age
+        except (ValueError, AttributeError):
+            return False
     
+    def _extract_age_options(self, age_series) -> List[int]:
+        """Извлекает все возможные возрасты из строковых значений"""
+        ages = set()
+        
+        for age_str in age_series:
+            if pd.isna(age_str):
+                continue
+            
+            age_str = str(age_str)
+            
+            if "-" in age_str:
+                # Формат "20-30"
+                try:
+                    parts = age_str.split("-")
+                    start = int(parts[0].strip())
+                    end = int(parts[1].strip())
+                    # Добавляем начало и конец диапазона
+                    ages.add(start)
+                    ages.add(end)
+                    # Добавляем середину для лучшего представления
+                    ages.add((start + end) // 2)
+                except:
+                    pass
+            elif "+" in age_str:
+                # Формат "40+"
+                try:
+                    base_age = int(age_str.replace("+", ""))
+                    ages.add(base_age)
+                    ages.add(base_age + 10)  # Добавляем верхнюю границу
+                except:
+                    pass
+            else:
+                # Одиночный возраст
+                try:
+                    ages.add(int(age_str))
+                except:
+                    pass
+        
+        # Сортируем и возвращаем
+        return sorted(ages) if ages else [18, 20, 25, 30, 35, 40, 45, 50]  # Дефолтные значения
+
     def get_filter_description(self, filters: Dict) -> str:
         """Получение текстового описания примененных фильтров"""
         descriptions = []
@@ -171,8 +249,16 @@ class BookFilter:
         if filters.get("sub_genre"):
             descriptions.append(f"Поджанр: {filters['sub_genre']}")
         
-        if filters.get("character_age"):
+        # Диапазон возраста (новый формат)
+        if filters.get("character_age_range"):
+            min_age, max_age = filters["character_age_range"]
+            descriptions.append(f"Возраст героя: {min_age}-{max_age} лет")
+        # Старый формат (отдельный возраст)
+        elif filters.get("character_age"):
             descriptions.append(f"Возраст героя: {filters['character_age']}")
+        
+        if filters.get("character_gender"):
+            descriptions.append(f"Пол: {filters['character_gender']}")
         
         if filters.get("character_profession"):
             descriptions.append(f"Профессия: {filters['character_profession']}")
@@ -180,9 +266,7 @@ class BookFilter:
         if filters.get("setting_location"):
             descriptions.append(f"Место: {filters['setting_location']}")
         
-        # Обрабатываем min_rating отдельно
-        if "min_rating" in filters:
-            # Этот фильтр не добавляем в общее описание, так как он обрабатывается отдельно в app.py
-            pass
+        if filters.get("setting_time_period"):
+            descriptions.append(f"Время: {filters['setting_time_period']}")
         
         return " | ".join(descriptions)
