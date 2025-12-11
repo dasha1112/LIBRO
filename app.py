@@ -436,59 +436,204 @@ def show_recommendations_page():
     
     st.header("🎯 Рекомендуемое вам")
     
-    # Получаем рекомендации
-    with st.spinner("Ищем книги, которые могут вам понравиться..."):
-        recommendations = recommender.get_recommendations(user.username, limit=20)
+    # 1. Собираем ВСЕ книги пользователя из всех списков
+    user_all_books = set()  # ID всех книг пользователя
     
-    # Проверяем есть ли хорошие отзывы
-    good_reviews_books = recommender._get_books_with_good_reviews(user.username)
+    # Все категории списков
+    list_categories = ["reading", "read", "planned", "dropped", "favorites"]
+    
+    for category in list_categories:
+        books_in_list = lists_manager.get_books_in_list(user.username, category, db)
+        for book in books_in_list:
+            if isinstance(book, dict) and "id" in book:
+                user_all_books.add(book["id"])
+    
+    # 2. Получаем ID книг с хорошими отзывами, исключая те, что уже в списках
+    good_reviews_books = []
+    for book_id_str, reviews in book_page_manager.reviews.items():
+        for review in reviews:
+            if review["username"] == user.username and review["rating"] >= 4:
+                book_id = int(book_id_str)
+                if book_id not in user_all_books:  # Исключаем если уже в списках
+                    good_reviews_books.append(book_id)
     
     if not good_reviews_books:
-        st.info("""
-        📝 **У вас пока нет оцененных книг**
+        # Показываем популярные книги, которых нет в списках пользователя
+        popular = db.books[
+            ~db.books["id"].isin(user_all_books)  # Исключаем книги из списков
+        ].sort_values("rating", ascending=False).head(10)
         
-        Чтобы получить персональные рекомендации:
-        1. Перейдите на страницу любой книги
-        2. Оставьте отзыв с оценкой (4⭐ или 5⭐)
-        3. Вернитесь на эту страницу
-        
-        А пока посмотрите популярные книги:
-        """)
+        if not popular.empty:
+            st.write("**Популярные книги, которых нет в ваших списках:**")
+            for _, book in popular.iterrows():
+                show_book_card(book, show_actions=True)
+        else:
+            st.info("Вы уже добавили в списки все популярные книги!")
+        return
     
-    # Показываем рекомендации
-    if recommendations:
-        st.subheader(f"📚 Найдено {len(recommendations)} рекомендаций")
+    # 3. Находим похожие книги, учитывая теги и тропы
+    recommended_ids = set()
+    all_recommendations = []
+    
+    for good_book_id in good_reviews_books[:3]:  # Берем только 3 книги для анализа
+        good_book = db.books[db.books["id"] == good_book_id]
+        if good_book.empty:
+            continue
         
-        # Простой список книг
-        for book in recommendations:
-            with st.container():
-                col1, col2 = st.columns([4, 1])
+        good_book = good_book.iloc[0]
+        
+        # Получаем теги и тропы из хорошей книги
+        good_book_tags = set(good_book.get("tags", [])) if isinstance(good_book.get("tags"), list) else set()
+        good_book_tropes = set(good_book.get("plot_tropes", [])) if isinstance(good_book.get("plot_tropes"), list) else set()
+        good_book_moods = set(good_book.get("mood", [])) if isinstance(good_book.get("mood"), list) else set()
+        
+        # Ищем похожие книги
+        similar_books = []
+        
+        for _, book in db.books.iterrows():
+            # Пропускаем если книга уже в списках пользователя
+            if book["id"] in user_all_books:
+                continue
+            
+            # Пропускаем если уже в рекомендациях
+            if book["id"] in recommended_ids:
+                continue
+            
+            # Пропускаем если это та же книга
+            if book["id"] == good_book_id:
+                continue
+            
+            similarity_score = 0
+            
+            # Совпадение по жанру
+            if book["main_genre"] == good_book["main_genre"]:
+                similarity_score += 2
+            
+            # Совпадение по поджанру
+            if book["sub_genre"] == good_book["sub_genre"]:
+                similarity_score += 1
+            
+            # Совпадение по тегам
+            book_tags = set(book.get("tags", [])) if isinstance(book.get("tags"), list) else set()
+            common_tags = good_book_tags.intersection(book_tags)
+            similarity_score += len(common_tags) * 0.5
+            
+            # Совпадение по тропам
+            book_tropes = set(book.get("plot_tropes", [])) if isinstance(book.get("plot_tropes"), list) else set()
+            common_tropes = good_book_tropes.intersection(book_tropes)
+            similarity_score += len(common_tropes) * 0.5
+            
+            # Совпадение по настроению
+            book_moods = set(book.get("mood", [])) if isinstance(book.get("mood"), list) else set()
+            common_moods = good_book_moods.intersection(book_moods)
+            similarity_score += len(common_moods) * 0.3
+            
+            # Бонус за высокий рейтинг
+            if book["rating"] >= 4.0:
+                similarity_score += 0.5
+            
+            if similarity_score > 0:
+                similar_books.append({
+                    "book": book,
+                    "score": similarity_score,
+                    "common_tags": list(common_tags),
+                    "common_tropes": list(common_tropes),
+                    "common_moods": list(common_moods)
+                })
+        
+        # Сортируем по схожести и берем топ
+        similar_books.sort(key=lambda x: x["score"], reverse=True)
+        
+        for item in similar_books[:4]:  # Берем до 4 книг от каждой исходной
+            if item["book"]["id"] not in recommended_ids:
+                all_recommendations.append(item)
+                recommended_ids.add(item["book"]["id"])
+    
+    # 4. Если мало рекомендаций, добавляем книги по другим критериям
+    if len(all_recommendations) < 5:
+        # Ищем книги с общими тегами/тропами из ВСЕХ оцененных книг
+        all_good_tags = set()
+        all_good_tropes = set()
+        all_good_moods = set()
+        
+        for good_book_id in good_reviews_books[:5]:
+            good_book = db.books[db.books["id"] == good_book_id]
+            if not good_book.empty:
+                book = good_book.iloc[0]
+                if isinstance(book.get("tags"), list):
+                    all_good_tags.update(book["tags"])
+                if isinstance(book.get("plot_tropes"), list):
+                    all_good_tropes.update(book["plot_tropes"])
+                if isinstance(book.get("mood"), list):
+                    all_good_moods.update(book["mood"])
+        
+        # Ищем книги с общими тегами/тропами
+        for _, book in db.books.iterrows():
+            if (book["id"] in user_all_books) or (book["id"] in recommended_ids):
+                continue
+            
+            book_tags = set(book.get("tags", [])) if isinstance(book.get("tags"), list) else set()
+            book_tropes = set(book.get("plot_tropes", [])) if isinstance(book.get("plot_tropes"), list) else set()
+            book_moods = set(book.get("mood", [])) if isinstance(book.get("mood"), list) else set()
+            
+            common_with_all_tags = all_good_tags.intersection(book_tags)
+            common_with_all_tropes = all_good_tropes.intersection(book_tropes)
+            common_with_all_moods = all_good_moods.intersection(book_moods)
+            
+            if common_with_all_tags or common_with_all_tropes or common_with_all_moods:
+                all_recommendations.append({
+                    "book": book,
+                    "score": 1.0,
+                    "common_tags": list(common_with_all_tags),
+                    "common_tropes": list(common_with_all_tropes),
+                    "common_moods": list(common_with_all_moods)
+                })
+                recommended_ids.add(book["id"])
                 
-                with col1:
-                    st.markdown(f"**{book['title']}**")
-                    st.caption(f"*{book['author']}*")
-                    
-                    # Основная информация в одну строку
-                    col_info = st.columns(4)
-                    with col_info[0]:
-                        st.metric("Рейтинг", f"{book['rating']}⭐", delta=None)
-                    with col_info[1]:
-                        st.metric("Жанр", book['main_genre'][:10], delta=None)
-                    with col_info[2]:
-                        st.metric("Год", book['year'], delta=None)
-                    with col_info[3]:
-                        st.metric("Стр.", book['pages'], delta=None)
-                
-                with col2:
-                    if st.button("📖", key=f"rec_btn_{book['id']}", help="Перейти к книге", use_container_width=True):
-                        st.session_state.current_page = "book_details"
-                        st.session_state.selected_book_id = book["id"]
-                        st.rerun()
-                
-                # Разделитель
-                st.divider()
+            if len(all_recommendations) >= 10:  # Максимум 10 рекомендаций
+                break
+    
+    # 5. Сортируем и показываем рекомендации
+    if all_recommendations:
+        # Сортируем по score
+        all_recommendations.sort(key=lambda x: x["score"], reverse=True)
+        
+        st.write(f"**Основываясь на ваших оценках, вам могут понравиться ({len(all_recommendations)} книг):**")
+        
+        for item in all_recommendations:
+            book = item["book"]
+            
+            # Создаем подсказку почему рекомендовано
+            reasons = []
+            if item.get("common_tags"):
+                reasons.append(f"Теги: {', '.join(item['common_tags'][:2])}")
+            if item.get("common_tropes"):
+                reasons.append(f"Тропы: {', '.join(item['common_tropes'][:2])}")
+            if item.get("common_moods"):
+                reasons.append(f"Настроение: {', '.join(item['common_moods'][:1])}")
+            
+            if reasons:
+                st.info(f"**Почему:** {' | '.join(reasons)}")
+            
+            show_book_card(book, show_actions=True)
     else:
-        st.warning("Не удалось найти рекомендации. Попробуйте оценить больше книг.")
+        st.info("""
+        Не удалось найти рекомендации на основе ваших оценок.
+        
+        **Возможные причины:**
+        1. Вы уже добавили в списки большинство похожих книг
+        2. Попробуйте оценить книги разных жанров и стилей
+        3. Или посмотрите популярные книги:
+        """)
+        
+        # Показываем популярные книги, которых нет в списках
+        popular = db.books[
+            ~db.books["id"].isin(user_all_books)
+        ].sort_values("rating", ascending=False).head(10)
+        
+        if not popular.empty:
+            for _, book in popular.iterrows():
+                show_book_card(book, show_actions=True)
 
 def show_main_search():
     """Главная страница поиска"""
@@ -746,26 +891,40 @@ def main():
         st.caption("Добро пожаловать! Войдите или зарегистрируйтесь")
         show_login_register()
     else:
-        # Верхняя панель с пользователем и навигацией
-        col_nav1, col_nav2, col_nav3, col_nav4 = st.columns([4, 1, 1, 1])
-        
-        with col_nav1:
-            st.caption(f"Привет, {current_user.username}!")
-        
-        with col_nav2:
-            # Кнопка для перехода к поиску
-            if st.session_state.current_page != "search":
-                if st.button("🔍 Поиск", use_container_width=True):
-                    st.session_state.current_page = "search"
-                    st.rerun()
-        
-        with col_nav3:
-            if st.button("🎯 Рекомендации", use_container_width=True):
+        # Простая навигация через st.radio
+        st.markdown(f"**Привет, {current_user.username}!**")
+
+        # Создаем горизонтальную навигацию
+        nav_options = ["🔍 Поиск", "🎯 Рекомендации", "👤 Профиль"]
+        nav_page_map = {
+            "🔍 Поиск": "search",
+            "🎯 Рекомендации": "recommendations", 
+            "👤 Профиль": "profile"
+        }
+
+        # Определяем текущий выбор
+        current_nav = next(
+            (key for key, value in nav_page_map.items() if value == st.session_state.current_page),
+            "🔍 Поиск"
+        )
+
+        # Создаем навигацию
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🔍 Поиск", use_container_width=True, 
+                        type="primary" if st.session_state.current_page == "search" else "secondary"):
+                st.session_state.current_page = "search"
+                st.rerun()
+
+        with col2:
+            if st.button("🎯 Рекомендации", use_container_width=True,
+                        type="primary" if st.session_state.current_page == "recommendations" else "secondary"):
                 st.session_state.current_page = "recommendations"
                 st.rerun()
-        
-        with col_nav4:
-            if st.button("👤 Профиль", use_container_width=True):
+
+        with col3:
+            if st.button("👤 Профиль", use_container_width=True,
+                        type="primary" if st.session_state.current_page == "profile" else "secondary"):
                 st.session_state.current_page = "profile"
                 st.rerun()
         
