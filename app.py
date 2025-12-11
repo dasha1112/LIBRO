@@ -464,11 +464,8 @@ def show_recommendations_page():
         ].sort_values("rating", ascending=False).head(10)
         
         if not popular.empty:
-            st.write("**Популярные книги, которых нет в ваших списках:**")
             for _, book in popular.iterrows():
                 show_book_card(book, show_actions=True)
-        else:
-            st.info("Вы уже добавили в списки все популярные книги!")
         return
     
     # 3. Находим похожие книги, учитывая теги и тропы
