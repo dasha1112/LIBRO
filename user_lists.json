@@ -1,0 +1,31 @@
+{
+  "loshka": {
+    "reading": {
+      "name": "Читаю",
+      "book_ids": [
+        19
+      ],
+      "description": "Книги, которые читаю сейчас"
+    },
+    "read": {
+      "name": "Прочитано",
+      "book_ids": [],
+      "description": "Прочитанные книги"
+    },
+    "planned": {
+      "name": "Планирую",
+      "book_ids": [],
+      "description": "Книги, которые планирую прочитать"
+    },
+    "dropped": {
+      "name": "Брошено",
+      "book_ids": [],
+      "description": "Книги, которые бросил читать"
+    },
+    "favorites": {
+      "name": "Любимые",
+      "book_ids": [],
+      "description": "Мои любимые книги"
+    }
+  }
+}
